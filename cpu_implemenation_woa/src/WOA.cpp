@@ -31,13 +31,13 @@ vector<float> algorithm::whale_optimization_algorithm(float (*fitness_function)(
     }
     
     float a = 2.0f * ( 1.0f - (float)(current_iteration/max_iteration));
-    float a2 = -1.0f + current_iteration * ((-1)/max_iteration);
+    float a2 = -1.0f + current_iteration * (float)((-1)/max_iteration);
 
 
     for (int i = 0 ; i < whale_count ; i++ ) {
       float A = 2.0f * a * RANDOM_VALUE - a;
       float C = 2.0f * RANDOM_VALUE;
-      int b = 1.0f;
+      int b = 1;
       float l = ( a2 -1.0f ) * RANDOM_VALUE + 1.0f;
       float p = RANDOM_VALUE;
       

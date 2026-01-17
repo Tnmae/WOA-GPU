@@ -1,7 +1,7 @@
 #include "../headers/WOA.hpp"
 
 int main() {
-  srand(time(0));
+  srand(time(0)); //initialize seed once
 
   std::cout << "Begin whale optimization algorithm on rastrigin function\n";
 
