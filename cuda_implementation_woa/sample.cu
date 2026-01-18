@@ -1,73 +1,96 @@
 #include <iostream>
 #include <vector>
-#include <random>
 #include <cstdlib>
 #include <ctime>
 #include <cuda_runtime_api.h>
 #include <math_constants.h>
 #include <curand.h>
+#include <curand_kernel.h>
+#include <cfloat>
 
-#define RANDOM_FLOAT (((float)rand()/RAND_MAX))
-#define RANDOM_FLOAT_RANGE(a, b) ((b - a) * ((float)rand() / RAND_MAX) + a)
 #define N 100
 #define WHALE_COUNT 50
 #define DIM 3
 
 using namespace std;
 
-__device__ void rastrigin_function(float *arr, float *fitness_value) {
-  float xi = arr[threadIdx.x];
-  float term = (xi * xi) - 10.0f * (cosf(2 * CUDART_PI_F * xi)) + 10.0f;
-  atomicAdd(fitness_value, term);
+__device__ void rastrigin_function(float *arr, float &fitness_value) {
+  for (int i = 0 ; i < DIM ; i++) {
+    float xi = arr[i];
+    fitness_value += (xi * xi) - 10.0f * (cosf(2 * CUDART_PI_F * xi)) + 10.0f;
+  }
 }
 
-__host__ void initVec(float *arr) {
+__device__ void sphere_function(float *arr, float &fitness_value) {
   for (int i = 0 ; i < DIM ; i++ ) {
-    arr[i] = rand() % 100;
+    float xi = arr[threadIdx.x];
+    fitness_value += (xi * xi);
   }
 }
 
 class Whale {
 public:
-  __host__ __device__ Whale(void (*fitness_function)(float* , float*), float *minx, float *maxx) {
+  __device__ Whale(int *fitness_function, float *minx, float *maxx, curandState *d_state) {
     for (int i = 0 ; i < DIM ; i++ ) {
-      Whale::position[i] = RANDOM_FLOAT * (*maxx - *minx) + *minx;
+      Whale::position[i] = curand_uniform(d_state) * (*maxx - *minx) + *minx;
     }
-    fitness_function(Whale::position, Whale::fitness_value);
+
+    switch (*fitness_function) {
+      case 1:
+        rastrigin_function(Whale::position, Whale::fitness_value);
+        break;
+      case 2:
+        sphere_function(Whale::position, Whale::fitness_value);
+        break;
+      default:
+        error_code = -1;
+        break;
+    }
   }
 
   float position[DIM];
-  float *fitness_value;
+  float fitness_value = 0.0f;
+  int error_code = 0;
 };
 
-__device__ void init_whale(Whale *buffer, void (*fitness_function)(float *, float *), float *minx, float *maxx) {
-  new(buffer + threadIdx.x) Whale(fitness_function, minx, maxx);
+__device__ void init_whale(Whale *buffer, int *fitness_function , float *minx, float *maxx, curandState *d_state) {
+  new(buffer) Whale(fitness_function, minx, maxx, d_state);
 }
 
-__global__ void init_whale_population(Whale *whale, void (*fitness_function)(float *, float *), float *minx, float *maxx) {
-  init_whale(whale, fitness_function, minx, maxx);
+__global__ void init_whale_population(Whale *whale, int *fitness_function, float *minx, float *maxx, curandState *d_state) {
+  int id = threadIdx.x;
+  curand_init(clock64(), id, 0, d_state);
+  for (int i = 0 ; i < WHALE_COUNT ; i++ ) {
+    init_whale(whale + i, fitness_function, minx, maxx, d_state);
+  }
 }
+
+
 
 int main() {
-  srand(time(NULL));
 
   Whale *whale_population;
   float *minx;
   float *maxx;
+  int *function_ptr;
+  curandState *d_state;
 
   cudaMallocManaged(&minx, sizeof(float));
   cudaMallocManaged(&maxx, sizeof(float));
   cudaMallocManaged(&whale_population, WHALE_COUNT * sizeof(Whale));
+  cudaMallocManaged(&function_ptr, sizeof(int));
+  cudaMallocManaged(&d_state, sizeof(curandState));
 
   *minx = -10.0f;
   *maxx = 10.0f;
+  *function_ptr = 1;
 
-  init_whale_population<<<1, WHALE_COUNT>>>(whale_population, rastrigin_function, minx, maxx);
+  init_whale_population<<<1, 1>>>(whale_population, function_ptr, minx, maxx, d_state);
 
   cudaDeviceSynchronize();
 
   for (int i = 0 ; i < WHALE_COUNT ; i++ ) {
-    std::cout << *whale_population[i].fitness_value << '\n';
+    std::cout << "whale " << i << " has fitness value = " << whale_population[i].fitness_value << " \n";
   }
 
   cudaFree(whale_population);
