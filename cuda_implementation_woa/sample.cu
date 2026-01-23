@@ -11,6 +11,9 @@
 #define N 100
 #define WHALE_COUNT 50
 #define DIM 3
+#define SCALE 1234
+#define BLOCKS 5
+#define THREADS 20
 
 using namespace std;
 
@@ -46,6 +49,7 @@ public:
         error_code = -1;
         break;
     }
+
   }
 
   float position[DIM];
@@ -53,19 +57,20 @@ public:
   int error_code = 0;
 };
 
+__global__ void setup_kernel(curandState *state) {
+  int id = threadIdx.x + blockIdx.x * threadIdx.x;
+  curand_init(clock64() + id * SCALE, id, 0, &state[id]);
+}
+
 __device__ void init_whale(Whale *buffer, int *fitness_function , float *minx, float *maxx, curandState *d_state) {
   new(buffer) Whale(fitness_function, minx, maxx, d_state);
 }
 
 __global__ void init_whale_population(Whale *whale, int *fitness_function, float *minx, float *maxx, curandState *d_state) {
-  int id = threadIdx.x;
-  curand_init(clock64(), id, 0, d_state);
-  for (int i = 0 ; i < WHALE_COUNT ; i++ ) {
-    init_whale(whale + i, fitness_function, minx, maxx, d_state);
-  }
+  int id = threadIdx.x + blockIdx.x * threadIdx.x;
+  curandState localstate = d_state[id];
+  init_whale(whale + threadIdx.x + blockIdx.x * 10, fitness_function, minx, maxx, &localstate);
 }
-
-
 
 int main() {
 
@@ -79,13 +84,15 @@ int main() {
   cudaMallocManaged(&maxx, sizeof(float));
   cudaMallocManaged(&whale_population, WHALE_COUNT * sizeof(Whale));
   cudaMallocManaged(&function_ptr, sizeof(int));
-  cudaMallocManaged(&d_state, sizeof(curandState));
+  cudaMallocManaged(&d_state, WHALE_COUNT * sizeof(curandState));
 
   *minx = -10.0f;
   *maxx = 10.0f;
   *function_ptr = 1;
 
-  init_whale_population<<<1, 1>>>(whale_population, function_ptr, minx, maxx, d_state);
+  setup_kernel<<<BLOCKS, 10>>>(d_state);
+
+  init_whale_population<<<BLOCKS, 10>>>(whale_population, function_ptr, minx, maxx, d_state);
 
   cudaDeviceSynchronize();
 
@@ -96,6 +103,8 @@ int main() {
   cudaFree(whale_population);
   cudaFree(minx);
   cudaFree(maxx);
+  cudaFree(d_state);
+  cudaFree(function_ptr);
 
   return EXIT_SUCCESS;
 }
